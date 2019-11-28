@@ -26,15 +26,8 @@ logger = logging.getLogger(__name__)
 class LabelSet(metrics_api.LabelSet):
     """See `opentelemetry.metrics.LabelSet."""
 
-    def __init__(
-        self,
-        meter: "Meter" = None,
-        labels: Dict[str, str] = None,
-        encoded: str = "",
-    ):
-        self.meter = meter
+    def __init__(self, labels: Dict[str, str] = None):
         self.labels = labels
-        self.encoded = encoded
 
 
 class BaseHandle:
@@ -110,7 +103,6 @@ class Metric(metrics_api.Metric):
         description: str,
         unit: str,
         value_type: Type[metrics_api.ValueT],
-        meter: "Meter",
         label_keys: Sequence[str] = None,
         enabled: bool = True,
         monotonic: bool = False,
@@ -119,7 +111,6 @@ class Metric(metrics_api.Metric):
         self.description = description
         self.unit = unit
         self.value_type = value_type
-        self.meter = meter
         self.label_keys = label_keys
         self.enabled = enabled
         self.monotonic = monotonic
@@ -127,30 +118,13 @@ class Metric(metrics_api.Metric):
 
     def get_handle(self, label_set: LabelSet) -> BaseHandle:
         """See `opentelemetry.metrics.Metric.get_handle`."""
-        lable_set_for = self._label_set_for(label_set)
-        handle = self.handles.get(lable_set_for.encoded)
+        handle = self.handles.get(label_set)
         if not handle:
             handle = self.HANDLE_TYPE(
                 self.value_type, self.enabled, self.monotonic
             )
-        self.handles[lable_set_for.encoded] = handle
+        self.handles[label_set] = handle
         return handle
-
-    def _label_set_for(self, label_set: LabelSet) -> LabelSet:
-        """Returns an appropriate `LabelSet` based off this metric's `meter`
-
-        If this metric's `meter` is the same as label_set's meter, that means
-        label_set was created from this metric's `meter` instance and the
-        proper handle can be found. If not, label_set was created using a
-        different `meter` implementation, in which the metric cannot interpret.
-        In this case, return the `EMPTY_LABEL_SET`.
-
-        Args:
-            label_set: The `LabelSet` to check for the same `Meter` implentation.
-        """
-        if label_set.meter and label_set.meter is self.meter:
-            return label_set
-        return EMPTY_LABEL_SET
 
     def __repr__(self):
         return '{}(name="{}", description={})'.format(
@@ -176,7 +150,6 @@ class Counter(Metric, metrics_api.Counter):
         description: str,
         unit: str,
         value_type: Type[metrics_api.ValueT],
-        meter: "Meter",
         label_keys: Sequence[str] = None,
         enabled: bool = True,
         monotonic: bool = True,
@@ -186,7 +159,6 @@ class Counter(Metric, metrics_api.Counter):
             description,
             unit,
             value_type,
-            meter,
             label_keys=label_keys,
             enabled=enabled,
             monotonic=monotonic,
@@ -214,7 +186,6 @@ class Gauge(Metric, metrics_api.Gauge):
         description: str,
         unit: str,
         value_type: Type[metrics_api.ValueT],
-        meter: "Meter",
         label_keys: Sequence[str] = None,
         enabled: bool = True,
         monotonic: bool = False,
@@ -224,7 +195,6 @@ class Gauge(Metric, metrics_api.Gauge):
             description,
             unit,
             value_type,
-            meter,
             label_keys=label_keys,
             enabled=enabled,
             monotonic=monotonic,
@@ -252,7 +222,6 @@ class Measure(Metric, metrics_api.Measure):
         description: str,
         unit: str,
         value_type: Type[metrics_api.ValueT],
-        meter: "Meter",
         label_keys: Sequence[str] = None,
         enabled: bool = False,
         monotonic: bool = False,
@@ -262,7 +231,6 @@ class Measure(Metric, metrics_api.Measure):
             description,
             unit,
             value_type,
-            meter,
             label_keys=label_keys,
             enabled=enabled,
             monotonic=monotonic,
@@ -279,10 +247,26 @@ class Measure(Metric, metrics_api.Measure):
 EMPTY_LABEL_SET = LabelSet()
 
 
+class Encoder:
+    def encode(self, dd):
+        pass
+
+
+class DumbEncoder(Encoder):
+    def encode(self, dd):
+        return tuple(sorted(dd.items()))
+
+
+class SmartEncoder(Encoder):
+    def encode(self, dd):
+        return tuple(reversed(sorted(dd.items())))
+
+
 class Meter(metrics_api.Meter):
     """See `opentelemetry.metrics.Meter`."""
 
-    def __init__(self):
+    def __init__(self, encoder=DumbEncoder):
+        self._encoder = encoder()
         self.labels = {}
 
     def record_batch(
@@ -326,18 +310,9 @@ class Meter(metrics_api.Meter):
         Args:
             labels: The dictionary of label keys to label values.
         """
-        if len(labels) == 0:
-            return EMPTY_LABEL_SET
-        sorted_labels = OrderedDict(sorted(labels.items()))
-        # Uses statsd encoding for labels
-        encoded = "," + ",".join(
-            "%s=%s" % (key, value) for (key, value) in sorted_labels.items()
-        )
-        # If LabelSet exists for this meter in memory, use existing one
-        if not self.labels.get(encoded):
-            self.labels[encoded] = LabelSet(
-                self, labels=sorted_labels, encoded=encoded
-            )
+        encoded = self._encoder.encode(labels)
+        if not encoded in self.labels:
+            self.labels[encoded] = LabelSet(self, labels=labels)
         return self.labels[encoded]
 
 
