@@ -15,11 +15,12 @@
 """Cloud Trace Span Exporter for OpenTelemetry."""
 
 import logging
-from typing import Sequence, Dict, Any, List
+from typing import Any, Dict, List, Sequence
 
-import opentelemetry.trace as trace_api
 from google.cloud.trace_v2 import TraceServiceClient
 from google.cloud.trace_v2.proto.trace_pb2 import AttributeValue
+
+import opentelemetry.trace as trace_api
 from opentelemetry.sdk.trace import Event
 from opentelemetry.sdk.trace.export import Span, SpanExporter, SpanExportResult
 from opentelemetry.util import types
@@ -39,7 +40,7 @@ class CloudTraceSpanExporter(SpanExporter):
     """
 
     def __init__(
-            self, project_id, client=None,
+        self, project_id, client=None,
     ):
         self.client = client or TraceServiceClient()
         self.project_id = project_id
@@ -59,12 +60,13 @@ class CloudTraceSpanExporter(SpanExporter):
             try:
                 cloud_trace_spans.append(self.client.create_span(**span))
             except Exception as ex:
-                logger.warning("Error {} when creating span {}".format(ex, span))
+                logger.warning(
+                    "Error {} when creating span {}".format(ex, span)
+                )
 
         try:
             self.client.batch_write_spans(
-                "projects/{}".format(self.project_id),
-                cloud_trace_spans,
+                "projects/{}".format(self.project_id), cloud_trace_spans,
             )
         except Exception as ex:
             logger.warning("Error while writing to Cloud Trace: %s", ex)
@@ -73,7 +75,7 @@ class CloudTraceSpanExporter(SpanExporter):
         return SpanExportResult.SUCCESS
 
     def translate_to_cloud_trace(
-            self, spans: Sequence[Span]
+        self, spans: Sequence[Span]
     ) -> List[Dict[str, Any]]:
         """Translate the spans to Cloud Trace format.
 
@@ -93,7 +95,9 @@ class CloudTraceSpanExporter(SpanExporter):
 
             parent_id = None
             if isinstance(span.parent, trace_api.Span):
-                parent_id = trace_api.format_span_id(span.parent.get_context().span_id)[2:]
+                parent_id = trace_api.format_span_id(
+                    span.parent.get_context().span_id
+                )[2:]
             elif isinstance(span.parent, trace_api.SpanContext):
                 parent_id = trace_api.format_span_id(span.parent.span_id)[2:]
 
@@ -102,18 +106,20 @@ class CloudTraceSpanExporter(SpanExporter):
 
             attributes = _extract_attributes(span.attributes)
 
-            cloud_trace_spans.append({
-                "name": span_name,
-                "span_id": span_id,
-                "display_name": get_truncatable_str(span.name),
-                "start_time": start_time,
-                "end_time": end_time,
-                "parent_span_id": parent_id,
-                "attributes": attributes,
-                "links": _extract_links(span.links),
-                "status": _extract_status(span.status),
-                "time_events": _extract_events(span.events),
-            })
+            cloud_trace_spans.append(
+                {
+                    "name": span_name,
+                    "span_id": span_id,
+                    "display_name": get_truncatable_str(span.name),
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "parent_span_id": parent_id,
+                    "attributes": attributes,
+                    "links": _extract_links(span.links),
+                    "status": _extract_status(span.status),
+                    "time_events": _extract_events(span.events),
+                }
+            )
 
         return cloud_trace_spans
 
@@ -125,7 +131,7 @@ def get_time_from_ns(ns):
     """Given epoch nanoseconds, split into epoch milliseconds and remaining nanoseconds"""
     if not ns:
         return None
-    return {'seconds': int(ns / 1e9), 'nanos': int(ns % 1e9)}
+    return {"seconds": int(ns / 1e9), "nanos": int(ns % 1e9)}
 
 
 def get_truncatable_str(str_to_convert, max_length=MAX_LENGTH):
@@ -180,8 +186,12 @@ def _extract_links(links: Sequence[trace_api.Link]):
         trace_id = trace_api.format_trace_id(link.context.trace_id)[2:]
         span_id = trace_api.format_span_id(link.context.span_id)[2:]
         extracted_links.append(
-            {'trace_id': trace_id, 'span_id': span_id, 'type': "CHILD_LINKED_SPAN",
-             'attributes': _extract_attributes(link.attributes)}
+            {
+                "trace_id": trace_id,
+                "span_id": span_id,
+                "type": "CHILD_LINKED_SPAN",
+                "attributes": _extract_attributes(link.attributes),
+            }
         )
     return {"link": extracted_links}
 
@@ -195,10 +205,10 @@ def _extract_events(events: Sequence[Event]):
         logs.append(
             {
                 "time": get_time_from_ns(event.timestamp),
-                "annotation": {"description": get_truncatable_str(event.name, 256),
-                               "attributes": _extract_attributes(
-                                   event.attributes
-                               )},
+                "annotation": {
+                    "description": get_truncatable_str(event.name, 256),
+                    "attributes": _extract_attributes(event.attributes),
+                },
             }
         )
     return {"time_event": logs}
@@ -229,8 +239,11 @@ def _format_attribute_value(value: types.AttributeValue):
         value_type = "string_value"
         value = get_truncatable_str(str(value))
     else:
-        logger.warning("ignoring attribute value {} of type {}. Values type must be one of bool, int, string or float"
-                       .format(value, type(value)))
+        logger.warning(
+            "ignoring attribute value {} of type {}. Values type must be one of bool, int, string or float".format(
+                value, type(value)
+            )
+        )
         return None
 
     return AttributeValue(**{value_type: value})
