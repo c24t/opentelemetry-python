@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Stackdriver Span Exporter for OpenTelemetry."""
+"""Cloud Trace Span Exporter for OpenTelemetry."""
 
 import logging
 from typing import Sequence, Dict, Any, List
@@ -36,11 +36,11 @@ AGENT = "opentelemetry-python [{}]".format(__version__)
 MAX_LENGTH = 128
 
 
-class StackdriverSpanExporter(SpanExporter):
-    """Stackdriver span exporter for OpenTelemetry.
+class CloudTraceSpanExporter(SpanExporter):
+    """Cloud Trace span exporter for OpenTelemetry.
 
     Args:
-        client: Stackdriver Trace client.
+        client: Cloud Trace client.
         project_id: project_id to create the Trace client.
     """
 
@@ -53,7 +53,7 @@ class StackdriverSpanExporter(SpanExporter):
         self.project_id = project_id
 
     def export(self, spans: Sequence[Span]) -> SpanExportResult:
-        """Export the spans to Stackdriver.
+        """Export the spans to Cloud Trace.
 
         See: https://cloud.google.com/trace/docs/reference/v2/rest/v2/
              projects.traces/batchWrite
@@ -61,35 +61,35 @@ class StackdriverSpanExporter(SpanExporter):
         Args:
             spans: Tuple of spans to export
         """
-        stackdriver_formatted_spans = self.translate_to_stackdriver(spans)
-        stackdriver_spans = []
-        for span in stackdriver_formatted_spans:
+        cloud_trace_formatted_spans = self.translate_to_cloud_trace(spans)
+        cloud_trace_spans = []
+        for span in cloud_trace_formatted_spans:
             try:
-                stackdriver_spans.append(self.client.create_span(**span))
+                cloud_trace_spans.append(self.client.create_span(**span))
             except Exception as ex:
                 logger.warning("Error {} when creating span {}".format(ex, span))
 
         try:
             self.client.batch_write_spans(
                 "projects/{}".format(self.project_id),
-                stackdriver_spans,
+                cloud_trace_spans,
             )
         except Exception as ex:
-            logger.warning("Error while writing to stackdriver: %s", ex)
+            logger.warning("Error while writing to Cloud Trace: %s", ex)
             return SpanExportResult.FAILED_RETRYABLE
 
         return SpanExportResult.SUCCESS
 
-    def translate_to_stackdriver(
+    def translate_to_cloud_trace(
             self, spans: Sequence[Span]
     ) -> List[Dict[str, Any]]:
-        """Translate the spans to Stackdriver format.
+        """Translate the spans to Cloud Trace format.
 
         Args:
             spans: Tuple of spans to convert
         """
 
-        stackdriver_spans = []
+        cloud_trace_spans = []
 
         for span in spans:
             ctx = span.get_context()
@@ -108,7 +108,8 @@ class StackdriverSpanExporter(SpanExporter):
             start_time = get_time_from_ns(span.start_time)
             end_time = get_time_from_ns(span.end_time)
 
-            span.attributes["g.co/agent"] = AGENT
+            attributes = _extract_attributes(span.attributes)
+            attributes['attribute_map']["g.co/agent"] = _format_attribute_value(AGENT)
 
             sd_span = {
                 "name": span_name,
@@ -117,23 +118,15 @@ class StackdriverSpanExporter(SpanExporter):
                 "start_time": start_time,
                 "end_time": end_time,
                 "parent_span_id": parent_id,
-                "attributes": _extract_attributes(span.attributes),
+                "attributes": attributes,
                 "links": _extract_links(span.links),
                 "status": _extract_status(span.status),
                 "time_events": _extract_events(span.events),
             }
 
-            """    
-            }
-            span_txt = {'end_time': end_time,
-                        'span_id': SPAN_ID,
-                        'start_time': start_time,
-                        'name': '''projects/{}/traces/{}/spans/{}'''.format(PROJECT_ID, TRACE_ID, SPAN_ID),
-                        'display_name': {'value': 'FISHYYYY'}}"""
+            cloud_trace_spans.append(sd_span)
 
-            stackdriver_spans.append(sd_span)
-
-        return stackdriver_spans
+        return cloud_trace_spans
 
     def shutdown(self):
         pass
@@ -146,12 +139,12 @@ def get_time_from_ns(ns):
     return {'seconds': int(ns / 1e9), 'nanos': int(ns % 1e9)}
 
 
-def get_truncatable_str(str_to_convert):
+def get_truncatable_str(str_to_convert, max_length=MAX_LENGTH):
     """Truncate a string if exceed limit and record the truncated bytes
         count.
     """
     truncated, truncated_byte_count = check_str_length(
-        str_to_convert, MAX_LENGTH
+        str_to_convert, max_length
     )
 
     result = {
@@ -204,11 +197,10 @@ def _extract_events(events: Sequence[Event]):
     """Convert span.events to dict."""
     logs = []
     for event in events:
-        annotation_json = {"description": get_truncatable_str(event.name)}
-        if event.attributes is not None:
-            annotation_json["attributes"] = _extract_attributes(
-                event.attributes
-            )
+        annotation_json = {"description": get_truncatable_str(event.name, 256),
+                           "attributes": _extract_attributes(
+                               event.attributes
+                           )}
 
         logs.append(
             {

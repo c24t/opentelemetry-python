@@ -16,29 +16,28 @@ Usage
 .. code:: python
 
     from opentelemetry import trace
-    from opentelemetry.ext import stackdriver
-    from opentelemetry.sdk.trace import Tracer
-    from opentelemetry.sdk.trace.export import BatchExportSpanProcessor
-
-    trace.set_preferred_tracer_implementation(lambda T: Tracer())
-    tracer = trace.tracer()
-
-    # create a StackdriverSpanExporter
-    stackdriver_exporter = stackdriver.trace.StackdriverSpanExporter(
-        project_id='my-helloworld-project',
+    from opentelemetry.ext.cloud_trace import CloudTraceSpanExporter
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import (
+        SimpleExportSpanProcessor,
     )
 
-    # Create a BatchExportSpanProcessor and add the exporter to it
-    span_processor = BatchExportSpanProcessor(stackdriver_exporter)
+    trace.set_tracer_provider(TracerProvider())
 
-    # add to the tracer
-    tracer.add_span_processor(span_processor)
-
+    cloud_trace_exporter = CloudTraceSpanExporter(
+        project_id='my-gcloud-project',
+    )
+    trace.get_tracer_provider().add_span_processor(
+        SimpleExportSpanProcessor(cloud_trace_exporter)
+    )
+    tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span('foo'):
         print('Hello world!')
+
+
 
 References
 ----------
 
-* `Stackdriver <https://cloud.google.com/stackdriver/>`_
+* `Cloud Trace <https://cloud.google.com/trace/>`_
 * `OpenTelemetry Project <https://opentelemetry.io/>`_

@@ -15,18 +15,22 @@
 import requests
 
 from opentelemetry import trace
-from opentelemetry.ext import http_requests
-from opentelemetry.ext.stackdriver.trace import StackdriverSpanExporter
-from opentelemetry.sdk.trace import Tracer
-from opentelemetry.sdk.trace.export import SimpleExportSpanProcessor
-
-trace.set_preferred_tracer_implementation(lambda T: Tracer())
-tracer = trace.tracer()
-span_processor = SimpleExportSpanProcessor(
-    StackdriverSpanExporter(project_id="my-helloworld-project")
+import opentelemetry.ext.requests
+from opentelemetry import trace
+from opentelemetry.ext.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import (
+    SimpleExportSpanProcessor,
 )
-tracer.add_span_processor(span_processor)
+opentelemetry.ext.requests.RequestsInstrumentor().instrument()
+trace.set_tracer_provider(TracerProvider())
 
-http_requests.enable(tracer)
+cloud_trace_exporter = CloudTraceSpanExporter(
+    project_id='aaxue-starter',
+)
+trace.get_tracer_provider().add_span_processor(
+    SimpleExportSpanProcessor(cloud_trace_exporter)
+)
+tracer = trace.get_tracer(__name__)
+
 response = requests.get(url="http://localhost:7777/hello")
-span_processor.shutdown()
