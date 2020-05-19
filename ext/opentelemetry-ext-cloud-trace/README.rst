@@ -1,14 +1,14 @@
-OpenTelemetry Stackdriver Exporters
+OpenTelemetry Cloud Trace Exporters
 =====================================
 
-This library provides integration with Google Cloud Stackdriver.
+This library provides integration with Google Cloud Trace.
 
 Installation
 ------------
 
 ::
 
-    pip install opentelemetry-ext-stackdriver
+    pip install opentelemetry-ext-cloud-trace
 
 Usage
 -----

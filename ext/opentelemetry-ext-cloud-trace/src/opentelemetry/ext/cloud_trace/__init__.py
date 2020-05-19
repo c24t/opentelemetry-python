@@ -15,19 +15,19 @@
 """Stackdriver Span Exporter for OpenTelemetry."""
 
 import logging
-import typing
+from typing import Sequence, Dict, Any, List
 
-from google.cloud.trace import trace_service_client
-from google.cloud.trace.client import Client
-from google.cloud.trace_v2.proto import trace_pb2
-
+from google.cloud import trace_v2
+from google.cloud.trace_v2 import TraceServiceClient
 import opentelemetry.trace as trace_api
+from google.cloud.trace_v2.proto.trace_pb2 import AttributeValue
 from opentelemetry.context import Context
+from opentelemetry.sdk.trace import Event
 from opentelemetry.sdk.trace.export import Span, SpanExporter, SpanExportResult
 from opentelemetry.sdk.util import ns_to_iso_str
 from opentelemetry.util import types
 
-from ..version import __version__
+from opentelemetry.ext.cloud_trace.version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,14 @@ class StackdriverSpanExporter(SpanExporter):
     """
 
     def __init__(
-        self, client=None, project_id=None,
+            self, client=None, project_id=None,
     ):
         if client is None:
-            client = Client(project=project_id)
+            client = TraceServiceClient()
         self.client = client
-        self.project_id = self.client.project
+        self.project_id = project_id
 
-    def export(self, spans: typing.Sequence[Span]) -> SpanExportResult:
+    def export(self, spans: Sequence[Span]) -> SpanExportResult:
         """Export the spans to Stackdriver.
 
         See: https://cloud.google.com/trace/docs/reference/v2/rest/v2/
@@ -61,12 +61,18 @@ class StackdriverSpanExporter(SpanExporter):
         Args:
             spans: Tuple of spans to export
         """
-        stackdriver_spans = self.translate_to_stackdriver(spans)
+        stackdriver_formatted_spans = self.translate_to_stackdriver(spans)
+        stackdriver_spans = []
+        for span in stackdriver_formatted_spans:
+            try:
+                stackdriver_spans.append(self.client.create_span(**span))
+            except Exception as ex:
+                logger.warning("Error {} when creating span {}".format(ex, span))
 
         try:
             self.client.batch_write_spans(
                 "projects/{}".format(self.project_id),
-                {"spans": stackdriver_spans},
+                stackdriver_spans,
             )
         except Exception as ex:
             logger.warning("Error while writing to stackdriver: %s", ex)
@@ -75,8 +81,8 @@ class StackdriverSpanExporter(SpanExporter):
         return SpanExportResult.SUCCESS
 
     def translate_to_stackdriver(
-        self, spans: typing.Sequence[Span]
-    ) -> typing.List[typing.Dict[str, typing.Any]]:
+            self, spans: Sequence[Span]
+    ) -> List[Dict[str, Any]]:
         """Translate the spans to Stackdriver format.
 
         Args:
@@ -87,40 +93,43 @@ class StackdriverSpanExporter(SpanExporter):
 
         for span in spans:
             ctx = span.get_context()
-            trace_id = "{:032x}".format(ctx.trace_id)
-            span_id = "{:016x}".format(ctx.span_id)
+            trace_id = trace_api.format_trace_id(ctx.trace_id)[2:]
+            span_id = trace_api.format_span_id(ctx.span_id)[2:]
             span_name = "projects/{}/traces/{}/spans/{}".format(
                 self.project_id, trace_id, span_id
             )
 
             parent_id = None
             if isinstance(span.parent, trace_api.Span):
-                parent_id = "{:016x}".format(span.parent.get_context().span_id)
+                parent_id = trace_api.format_span_id(span.parent.get_context().span_id)[2:]
             elif isinstance(span.parent, trace_api.SpanContext):
-                parent_id = "{:016x}".format(span.parent.span_id)
+                parent_id = trace_api.format_span_id(span.parent.span_id)[2:]
 
-            start_time = None
-            if span.start_time:
-                start_time = ns_to_iso_str(span.start_time)
-            end_time = None
-            if span.end_time:
-                end_time = ns_to_iso_str(span.end_time)
+            start_time = get_time_from_ns(span.start_time)
+            end_time = get_time_from_ns(span.end_time)
 
             span.attributes["g.co/agent"] = AGENT
-            attr_map = extract_attributes(span.attributes)
 
             sd_span = {
                 "name": span_name,
-                "spanId": span_id,
-                "parentSpanId": parent_id,
-                "displayName": get_truncatable_str(span.name),
-                "attributes": map_attributes(attr_map),
-                "links": extract_links(span.links),
-                "status": extract_status(span.status),
-                "timeEvents": extract_events(span.events),
-                "startTime": start_time,
-                "endTime": end_time,
+                "span_id": span_id,
+                "display_name": get_truncatable_str(span.name),
+                "start_time": start_time,
+                "end_time": end_time,
+                "parent_span_id": parent_id,
+                "attributes": _extract_attributes(span.attributes),
+                "links": _extract_links(span.links),
+                "status": _extract_status(span.status),
+                "time_events": _extract_events(span.events),
             }
+
+            """    
+            }
+            span_txt = {'end_time': end_time,
+                        'span_id': SPAN_ID,
+                        'start_time': start_time,
+                        'name': '''projects/{}/traces/{}/spans/{}'''.format(PROJECT_ID, TRACE_ID, SPAN_ID),
+                        'display_name': {'value': 'FISHYYYY'}}"""
 
             stackdriver_spans.append(sd_span)
 
@@ -128,6 +137,13 @@ class StackdriverSpanExporter(SpanExporter):
 
     def shutdown(self):
         pass
+
+
+def get_time_from_ns(ns):
+    """Given epoch nanoseconds, split into epoch milliseconds and remaining nanoseconds"""
+    if not ns:
+        return None
+    return {'seconds': int(ns / 1e9), 'nanos': int(ns % 1e9)}
 
 
 def get_truncatable_str(str_to_convert):
@@ -158,14 +174,12 @@ def check_str_length(str_to_check, limit=MAX_LENGTH):
 
     result = str(str_bytes.decode("utf-8", errors="ignore"))
 
-    return (result, truncated_byte_count)
+    return result, truncated_byte_count
 
 
-def extract_status(status: trace_api.Status):
+def _extract_status(status: trace_api.Status):
     """Convert a Status object to dict."""
-    status_json = {"details": None}
-
-    status_json["code"] = status.canonical_code.value
+    status_json = {"details": None, "code": status.canonical_code.value}
 
     if status.description is not None:
         status_json["message"] = status.description
@@ -173,45 +187,39 @@ def extract_status(status: trace_api.Status):
     return status_json
 
 
-def extract_links(links):
-    """Convert span.links to set."""
-    if not links:
-        return None
-
-    links = []
+def _extract_links(links: Sequence[trace_api.Link]):
+    """Convert span.links"""
+    extracted_links = []
     for link in links:
-        trace_id = link.context.trace_id
-        span_id = link.context.span_id
-        links.append(
-            {trace_id: trace_id, span_id: span_id, type: "CHILD_LINKED_SPAN"}
+        trace_id = trace_api.format_trace_id(link.context.trace_id)[2:]
+        span_id = trace_api.format_span_id(link.context.span_id)[2:]
+        extracted_links.append(
+            {'trace_id': trace_id, 'span_id': span_id, 'type': "CHILD_LINKED_SPAN",
+             'attributes': _extract_attributes(link.attributes)}
         )
-    return set(links)
+    return {"link": extracted_links}
 
 
-def extract_events(events):
+def _extract_events(events: Sequence[Event]):
     """Convert span.events to dict."""
-    if not events:
-        return None
-
     logs = []
-
     for event in events:
         annotation_json = {"description": get_truncatable_str(event.name)}
         if event.attributes is not None:
-            annotation_json["attributes"] = extract_attributes(
+            annotation_json["attributes"] = _extract_attributes(
                 event.attributes
             )
 
         logs.append(
             {
-                "time": ns_to_iso_str(event.timestamp),
+                "time": get_time_from_ns(event.timestamp),
                 "annotation": annotation_json,
             }
         )
-    return {"timeEvent": logs}
+    return {"time_event": logs}
 
 
-def extract_attributes(attrs: types.Attributes):
+def _extract_attributes(attrs: types.Attributes):
     """Convert span.attributes to dict."""
     attributes_json = {}
 
@@ -220,28 +228,12 @@ def extract_attributes(attrs: types.Attributes):
         value = _format_attribute_value(value)
 
         if value is not None:
-            attributes_json[key] = value
-
-    result = {"attributeMap": attributes_json}
-
-    return result
+            attributes_json[ATTRIBUTE_MAPPING.get(key, key)] = value
+    # Add dropped_attributes?
+    return {"attribute_map": attributes_json}
 
 
-def map_attributes(attribute_map):
-    """Convert the attributes to stackdriver attributes."""
-    if attribute_map is None:
-        return attribute_map
-    for (key, value) in attribute_map.items():
-        if key != "attributeMap":
-            continue
-        for attribute_key in list(value.keys()):
-            if attribute_key in ATTRIBUTE_MAPPING:
-                new_key = ATTRIBUTE_MAPPING.get(attribute_key)
-                value[new_key] = value.pop(attribute_key)
-    return attribute_map
-
-
-def _format_attribute_value(value):
+def _format_attribute_value(value: types.AttributeValue):
     if isinstance(value, bool):
         value_type = "bool_value"
     elif isinstance(value, int):
@@ -250,11 +242,12 @@ def _format_attribute_value(value):
         value_type = "string_value"
         value = get_truncatable_str(value)
     elif isinstance(value, float):
-        value_type = "double_value"
+        value_type = "string_value"
+        value = get_truncatable_str(value)
     else:
         return None
 
-    return {value_type: value}
+    return AttributeValue(**{value_type: value})
 
 
 ATTRIBUTE_MAPPING = {

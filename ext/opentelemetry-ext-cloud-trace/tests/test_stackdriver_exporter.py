@@ -15,16 +15,17 @@
 import unittest
 from unittest import mock
 
-import opentelemetry.ext.stackdriver.trace as sd_exporter
+import opentelemetry.ext.cloud_trace as sd_exporter
 from opentelemetry.sdk.trace import Span
 from opentelemetry.trace import SpanContext, SpanKind
-from opentelemetry.util.version import __version__
+from opentelemetry.version import __version__
+from google.cloud.trace_v2.proto.trace_pb2 import AttributeValue
 
 
 class TestStackdriverSpanExporter(unittest.TestCase):
     def setUp(self):
         self.client_patcher = mock.patch(
-            "opentelemetry.ext.stackdriver.trace.Client"
+            "opentelemetry.ext.cloud_trace.TraceServiceClient"
         )
         self.client_patcher.start()
 
@@ -57,7 +58,8 @@ class TestStackdriverSpanExporter(unittest.TestCase):
             Span(
                 name="span_name",
                 context=SpanContext(
-                    trace_id=int(trace_id, 16), span_id=int(span_id, 16)
+                    trace_id=int(trace_id, 16), span_id=int(span_id, 16),
+                    is_remote=False
                 ),
                 parent=None,
                 kind=SpanKind.INTERNAL,
@@ -70,22 +72,20 @@ class TestStackdriverSpanExporter(unittest.TestCase):
                     "name": "projects/PROJECT/traces/{}/spans/{}".format(
                         trace_id, span_id
                     ),
-                    "spanId": span_id,
-                    "parentSpanId": None,
-                    "displayName": {
+                    "span_id": span_id,
+                    "parent_span_id": None,
+                    "display_name": {
                         "value": "span_name",
                         "truncated_byte_count": 0,
                     },
                     "attributes": {
-                        "attributeMap": {
-                            "g.co/agent": {
-                                "string_value": {
-                                    "value": "opentelemetry-python [{}]".format(
-                                        __version__
-                                    ),
-                                    "truncated_byte_count": 0,
-                                }
-                            }
+                        "attribute_map": {
+                            "g.co/agent": AttributeValue(string_value={
+                                "value": "opentelemetry-python [{}]".format(
+                                    __version__
+                                ),
+                                "truncated_byte_count": 0,
+                            })
                         }
                     },
                     "links": None,
@@ -109,5 +109,5 @@ class TestStackdriverSpanExporter(unittest.TestCase):
 
         name = "projects/{}".format(project_id)
 
-        client.batch_write_spans.assert_called_with(name, stackdriver_spans)
-        self.assertTrue(client.batch_write_spans.called)
+        client.create_span.assert_called_with(name, stackdriver_spans)
+        self.assertTrue(client.create_span.called)
