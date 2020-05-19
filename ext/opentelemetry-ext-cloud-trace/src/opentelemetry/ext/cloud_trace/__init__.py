@@ -23,11 +23,9 @@ from google.cloud.trace_v2.proto.trace_pb2 import AttributeValue
 from opentelemetry.sdk.trace import Event
 from opentelemetry.sdk.trace.export import Span, SpanExporter, SpanExportResult
 from opentelemetry.util import types
-from opentelemetry.version import __version__
 
 logger = logging.getLogger(__name__)
 
-AGENT = "opentelemetry-python [{}]".format(__version__)
 # Max length is 128 bytes for a truncatable string.
 MAX_LENGTH = 128
 
@@ -103,7 +101,6 @@ class CloudTraceSpanExporter(SpanExporter):
             end_time = get_time_from_ns(span.end_time)
 
             attributes = _extract_attributes(span.attributes)
-            attributes['attribute_map']["g.co/agent"] = _format_attribute_value(AGENT)
 
             cloud_trace_spans.append({
                 "name": span_name,

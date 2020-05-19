@@ -19,13 +19,12 @@ from opentelemetry.ext.cloud_trace import CloudTraceSpanExporter, _extract_statu
     _extract_links
 from opentelemetry.sdk.trace import Span
 from opentelemetry.trace import SpanContext, SpanKind, Link
-from opentelemetry.version import __version__
 from google.cloud.trace_v2.proto.trace_pb2 import AttributeValue
 from opentelemetry.trace.status import Status, StatusCanonicalCode
 from opentelemetry.sdk.trace import Event
 
 
-class TestStackdriverSpanExporter(unittest.TestCase):
+class TestCloudTraceSpanExporter(unittest.TestCase):
     def setUp(self):
         self.client_patcher = mock.patch(
             "opentelemetry.ext.cloud_trace.TraceServiceClient"
@@ -84,7 +83,7 @@ class TestStackdriverSpanExporter(unittest.TestCase):
             )
         ]
 
-        stackdriver_spans = {
+        cloud_trace_spans = {
             "name": "projects/{}/traces/{}/spans/{}".format(
                 self.project_id, trace_id, span_id
             ),
@@ -95,14 +94,7 @@ class TestStackdriverSpanExporter(unittest.TestCase):
                 "truncated_byte_count": 0,
             },
             "attributes": {
-                "attribute_map": {
-                    "g.co/agent": AttributeValue(string_value={
-                        "value": "opentelemetry-python [{}]".format(
-                            __version__
-                        ),
-                        "truncated_byte_count": 0,
-                    })
-                }
+                "attribute_map": {}
             },
             "links": None,
             "status": None,
@@ -113,13 +105,11 @@ class TestStackdriverSpanExporter(unittest.TestCase):
 
         client = mock.Mock()
 
-        exporter = CloudTraceSpanExporter(
-            self.project_id, client=client
-        )
+        exporter = CloudTraceSpanExporter(self.project_id, client=client)
 
         exporter.export(span_datas)
 
-        client.create_span.assert_called_with(**stackdriver_spans)
+        client.create_span.assert_called_with(**cloud_trace_spans)
         self.assertTrue(client.create_span.called)
 
     def test_extract_status(self):
