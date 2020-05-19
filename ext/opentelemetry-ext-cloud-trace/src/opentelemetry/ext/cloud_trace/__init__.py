@@ -1,4 +1,4 @@
-# Copyright 2019, OpenTelemetry Authors
+# Copyright OpenTelemetry Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,17 +17,13 @@
 import logging
 from typing import Sequence, Dict, Any, List
 
-from google.cloud import trace_v2
-from google.cloud.trace_v2 import TraceServiceClient
 import opentelemetry.trace as trace_api
+from google.cloud.trace_v2 import TraceServiceClient
 from google.cloud.trace_v2.proto.trace_pb2 import AttributeValue
-from opentelemetry.context import Context
 from opentelemetry.sdk.trace import Event
 from opentelemetry.sdk.trace.export import Span, SpanExporter, SpanExportResult
-from opentelemetry.sdk.util import ns_to_iso_str
 from opentelemetry.util import types
-
-from opentelemetry.ext.cloud_trace.version import __version__
+from opentelemetry.version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +41,9 @@ class CloudTraceSpanExporter(SpanExporter):
     """
 
     def __init__(
-            self, client=None, project_id=None,
+            self, project_id, client=None,
     ):
-        if client is None:
-            client = TraceServiceClient()
-        self.client = client
+        self.client = client or TraceServiceClient()
         self.project_id = project_id
 
     def export(self, spans: Sequence[Span]) -> SpanExportResult:
@@ -111,7 +105,7 @@ class CloudTraceSpanExporter(SpanExporter):
             attributes = _extract_attributes(span.attributes)
             attributes['attribute_map']["g.co/agent"] = _format_attribute_value(AGENT)
 
-            sd_span = {
+            cloud_trace_spans.append({
                 "name": span_name,
                 "span_id": span_id,
                 "display_name": get_truncatable_str(span.name),
@@ -122,9 +116,7 @@ class CloudTraceSpanExporter(SpanExporter):
                 "links": _extract_links(span.links),
                 "status": _extract_status(span.status),
                 "time_events": _extract_events(span.events),
-            }
-
-            cloud_trace_spans.append(sd_span)
+            })
 
         return cloud_trace_spans
 
@@ -172,6 +164,8 @@ def check_str_length(str_to_check, limit=MAX_LENGTH):
 
 def _extract_status(status: trace_api.Status):
     """Convert a Status object to dict."""
+    if not status:
+        return None
     status_json = {"details": None, "code": status.canonical_code.value}
 
     if status.description is not None:
@@ -182,6 +176,8 @@ def _extract_status(status: trace_api.Status):
 
 def _extract_links(links: Sequence[trace_api.Link]):
     """Convert span.links"""
+    if not links:
+        return None
     extracted_links = []
     for link in links:
         trace_id = trace_api.format_trace_id(link.context.trace_id)[2:]
@@ -195,17 +191,17 @@ def _extract_links(links: Sequence[trace_api.Link]):
 
 def _extract_events(events: Sequence[Event]):
     """Convert span.events to dict."""
+    if not events:
+        return None
     logs = []
     for event in events:
-        annotation_json = {"description": get_truncatable_str(event.name, 256),
-                           "attributes": _extract_attributes(
-                               event.attributes
-                           )}
-
         logs.append(
             {
                 "time": get_time_from_ns(event.timestamp),
-                "annotation": annotation_json,
+                "annotation": {"description": get_truncatable_str(event.name, 256),
+                               "attributes": _extract_attributes(
+                                   event.attributes
+                               )},
             }
         )
     return {"time_event": logs}
@@ -220,8 +216,7 @@ def _extract_attributes(attrs: types.Attributes):
         value = _format_attribute_value(value)
 
         if value is not None:
-            attributes_json[ATTRIBUTE_MAPPING.get(key, key)] = value
-    # Add dropped_attributes?
+            attributes_json[key] = value
     return {"attribute_map": attributes_json}
 
 
@@ -235,32 +230,10 @@ def _format_attribute_value(value: types.AttributeValue):
         value = get_truncatable_str(value)
     elif isinstance(value, float):
         value_type = "string_value"
-        value = get_truncatable_str(value)
+        value = get_truncatable_str(str(value))
     else:
+        logger.warning("ignoring attribute value {} of type {}. Values type must be one of bool, int, string or float"
+                       .format(value, type(value)))
         return None
 
     return AttributeValue(**{value_type: value})
-
-
-ATTRIBUTE_MAPPING = {
-    "component": "/component",
-    "error.message": "/error/message",
-    "error.name": "/error/name",
-    "http.client_city": "/http/client_city",
-    "http.client_country": "/http/client_country",
-    "http.client_protocol": "/http/client_protocol",
-    "http.client_region": "/http/client_region",
-    "http.host": "/http/host",
-    "http.method": "/http/method",
-    "http.redirected_url": "/http/redirected_url",
-    "http.request_size": "/http/request/size",
-    "http.response_size": "/http/response/size",
-    "http.status_code": "/http/status_code",
-    "http.url": "/http/url",
-    "http.user_agent": "/http/user_agent",
-    "pid": "/pid",
-    "stacktrace": "/stacktrace",
-    "tid": "/tid",
-    "grpc.host_port": "/grpc/host_port",
-    "grpc.method": "/grpc/method",
-}
