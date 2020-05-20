@@ -109,7 +109,7 @@ class CloudTraceSpanExporter(SpanExporter):
                 {
                     "name": span_name,
                     "span_id": span_id,
-                    "display_name": get_truncatable_str(span.name),
+                    "display_name": get_truncatable_str_object(span.name),
                     "start_time": start_time,
                     "end_time": end_time,
                     "parent_span_id": parent_id,
@@ -141,13 +141,11 @@ def get_time_from_ns(nanoseconds):
     return {"seconds": int(nanoseconds / 1e9), "nanos": int(nanoseconds % 1e9)}
 
 
-def get_truncatable_str(str_to_convert, max_length=MAX_LENGTH):
+def get_truncatable_str_object(str_to_convert, max_length=MAX_LENGTH):
     """Truncate the string if it exceeds the length limit and record the truncated bytes
         count.
     """
-    truncated, truncated_byte_count = check_str_length(
-        str_to_convert, max_length
-    )
+    truncated, truncated_byte_count = truncate_str(str_to_convert, max_length)
 
     result = {
         "value": truncated,
@@ -156,7 +154,7 @@ def get_truncatable_str(str_to_convert, max_length=MAX_LENGTH):
     return result
 
 
-def check_str_length(str_to_check, limit=MAX_LENGTH):
+def truncate_str(str_to_check, limit=MAX_LENGTH):
     """Check the length of a string. If exceeds limit, then truncate it.
     """
     str_bytes = str_to_check.encode("utf-8")
@@ -213,7 +211,7 @@ def _extract_events(events: Sequence[Event]):
             {
                 "time": get_time_from_ns(event.timestamp),
                 "annotation": {
-                    "description": get_truncatable_str(event.name, 256),
+                    "description": get_truncatable_str_object(event.name, 256),
                     "attributes": _extract_attributes(event.attributes),
                 },
             }
@@ -223,15 +221,15 @@ def _extract_events(events: Sequence[Event]):
 
 def _extract_attributes(attrs: types.Attributes):
     """Convert span.attributes to dict."""
-    attributes_json = {}
+    attributes_dict = {}
 
     for key, value in attrs.items():
-        key = check_str_length(key)[0]
+        key = truncate_str(key)[0]
         value = _format_attribute_value(value)
 
         if value is not None:
-            attributes_json[key] = value
-    return {"attribute_map": attributes_json}
+            attributes_dict[key] = value
+    return {"attribute_map": attributes_dict}
 
 
 def _format_attribute_value(value: types.AttributeValue):
@@ -241,10 +239,10 @@ def _format_attribute_value(value: types.AttributeValue):
         value_type = "int_value"
     elif isinstance(value, str):
         value_type = "string_value"
-        value = get_truncatable_str(value)
+        value = get_truncatable_str_object(value)
     elif isinstance(value, float):
         value_type = "string_value"
-        value = get_truncatable_str(str(value))
+        value = get_truncatable_str_object(str(value))
     else:
         logger.warning(
             "ignoring attribute value %s of type %s. Values type must be one of bool, int, string or float",
