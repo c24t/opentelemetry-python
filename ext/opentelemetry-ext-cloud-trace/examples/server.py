@@ -12,33 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import flask
 import requests
+from flask import Flask
 
+import opentelemetry.ext.requests
 from opentelemetry import trace
-from opentelemetry.ext import http_requests
-from opentelemetry.ext.stackdriver import StackdriverSpanExporter
-from opentelemetry.ext.wsgi import OpenTelemetryMiddleware
-from opentelemetry.sdk.trace import Tracer
-from opentelemetry.sdk.trace.export import BatchExportSpanProcessor
+from opentelemetry.ext.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.ext.flask import FlaskInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleExportSpanProcessor
 
-trace.set_preferred_tracer_implementation(lambda T: Tracer())
+opentelemetry.ext.requests.RequestsInstrumentor().instrument()
+trace.set_tracer_provider(TracerProvider())
 
-span_processor = BatchExportSpanProcessor(StackdriverSpanExporter())
-http_requests.enable(trace.tracer())
-trace.tracer().add_span_processor(span_processor)
-
-app = flask.Flask(__name__)
-app.wsgi_app = OpenTelemetryMiddleware(app.wsgi_app)
+cloud_trace_exporter = CloudTraceSpanExporter(project_id="my-gcloud-project")
+trace.get_tracer_provider().add_span_processor(
+    SimpleExportSpanProcessor(cloud_trace_exporter)
+)
+app = Flask(__name__)
+FlaskInstrumentor().instrument_app(app)
 
 
 @app.route("/")
 def hello():
-    with trace.tracer().start_as_current_span("parent"):
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span("parent"):
         requests.get("https://www.wikipedia.org/wiki/Rabbit")
     return "hello"
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
-    span_processor.shutdown()
+    app.run(debug=True, port=7777)

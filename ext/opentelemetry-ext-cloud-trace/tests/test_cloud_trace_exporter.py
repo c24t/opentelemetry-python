@@ -144,14 +144,14 @@ class TestCloudTraceSpanExporter(unittest.TestCase):
 
     def test_extract_events(self):
         self.assertIsNone(_extract_events([]))
-        time_in_ns = 1589919268850900051
-        time_in_ms_and_ns = {"seconds": 1589919268, "nanos": 850899968}
+        time_in_ns1 = 1589919268850900051
+        time_in_ms_and_ns1 = {"seconds": 1589919268, "nanos": 850899968}
         time_in_ns2 = 1589919438550020326
         time_in_ms_and_ns2 = {"seconds": 1589919438, "nanos": 550020352}
         event1 = Event(
             name="event1",
             attributes=self.attributes_variety_pack,
-            timestamp=time_in_ns,
+            timestamp=time_in_ns1,
         )
         event2 = Event(
             name="event2",
@@ -163,7 +163,7 @@ class TestCloudTraceSpanExporter(unittest.TestCase):
             {
                 "time_event": [
                     {
-                        "time": time_in_ms_and_ns,
+                        "time": time_in_ms_and_ns1,
                         "annotation": {
                             "description": {
                                 "value": "event1",
@@ -189,11 +189,12 @@ class TestCloudTraceSpanExporter(unittest.TestCase):
     def test_extract_links(self):
         self.assertIsNone(_extract_links([]))
         trace_id = "6e0c63257de34c92bf9efcd03927272e"
-        span_id = "95bb5edabd45950f"
+        span_id1 = "95bb5edabd45950f"
+        span_id2 = "b6b86ad2915c9ddc"
         link1 = Link(
             context=SpanContext(
                 trace_id=int(trace_id, 16),
-                span_id=int(span_id, 16),
+                span_id=int(span_id1, 16),
                 is_remote=False,
             ),
             attributes={},
@@ -201,7 +202,7 @@ class TestCloudTraceSpanExporter(unittest.TestCase):
         link2 = Link(
             context=SpanContext(
                 trace_id=int(trace_id, 16),
-                span_id=int(span_id, 16),
+                span_id=int(span_id1, 16),
                 is_remote=False,
             ),
             attributes=self.attributes_variety_pack,
@@ -209,7 +210,7 @@ class TestCloudTraceSpanExporter(unittest.TestCase):
         link3 = Link(
             context=SpanContext(
                 trace_id=int(trace_id, 16),
-                span_id=int(span_id, 16),
+                span_id=int(span_id2, 16),
                 is_remote=False,
             ),
             attributes={"illegal_attr_value": dict(), "int_attr_value": 123},
@@ -219,20 +220,20 @@ class TestCloudTraceSpanExporter(unittest.TestCase):
             {
                 "link": [
                     {
-                        "trace_id": "6e0c63257de34c92bf9efcd03927272e",
-                        "span_id": "95bb5edabd45950f",
+                        "trace_id": trace_id,
+                        "span_id": span_id1,
                         "type": "CHILD_LINKED_SPAN",
                         "attributes": {"attribute_map": {}},
                     },
                     {
-                        "trace_id": "6e0c63257de34c92bf9efcd03927272e",
-                        "span_id": "95bb5edabd45950f",
+                        "trace_id": trace_id,
+                        "span_id": span_id1,
                         "type": "CHILD_LINKED_SPAN",
                         "attributes": self.extracted_attributes_variety_pack,
                     },
                     {
-                        "trace_id": "6e0c63257de34c92bf9efcd03927272e",
-                        "span_id": "95bb5edabd45950f",
+                        "trace_id": trace_id,
+                        "span_id": span_id2,
                         "type": "CHILD_LINKED_SPAN",
                         "attributes": {
                             "attribute_map": {

@@ -35,8 +35,8 @@ class CloudTraceSpanExporter(SpanExporter):
     """Cloud Trace span exporter for OpenTelemetry.
 
     Args:
-        client: Cloud Trace client.
-        project_id: project_id to create the Trace client.
+        project_id: ID of the cloud project that will receive the traces.
+        client: Cloud Trace client. If not given, will be taken from gcloud default credentials
     """
 
     def __init__(
@@ -54,23 +54,22 @@ class CloudTraceSpanExporter(SpanExporter):
         Args:
             spans: Tuple of spans to export
         """
-        cloud_trace_formatted_spans = self.translate_to_cloud_trace(spans)
         cloud_trace_spans = []
-        for span in cloud_trace_formatted_spans:
+        for span in self.translate_to_cloud_trace(spans):
             try:
                 cloud_trace_spans.append(self.client.create_span(**span))
+            # pylint: disable=broad-except
             except Exception as ex:
-                logger.warning(
-                    "Error {} when creating span {}".format(ex, span)
-                )
+                logger.warning("Error %s when creating span %s", ex, span)
 
         try:
             self.client.batch_write_spans(
                 "projects/{}".format(self.project_id), cloud_trace_spans,
             )
+        # pylint: disable=broad-except
         except Exception as ex:
             logger.warning("Error while writing to Cloud Trace: %s", ex)
-            return SpanExportResult.FAILED_RETRYABLE
+            return SpanExportResult.FAILURE
 
         return SpanExportResult.SUCCESS
 
@@ -87,19 +86,19 @@ class CloudTraceSpanExporter(SpanExporter):
 
         for span in spans:
             ctx = span.get_context()
-            trace_id = trace_api.format_trace_id(ctx.trace_id)[2:]
-            span_id = trace_api.format_span_id(ctx.span_id)[2:]
+            trace_id = _get_hexidecimal_trace_id(ctx.trace_id)
+            span_id = _get_hexidecimal_span_id(ctx.span_id)
             span_name = "projects/{}/traces/{}/spans/{}".format(
                 self.project_id, trace_id, span_id
             )
 
             parent_id = None
             if isinstance(span.parent, trace_api.Span):
-                parent_id = trace_api.format_span_id(
+                parent_id = _get_hexidecimal_span_id(
                     span.parent.get_context().span_id
-                )[2:]
+                )
             elif isinstance(span.parent, trace_api.SpanContext):
-                parent_id = trace_api.format_span_id(span.parent.span_id)[2:]
+                parent_id = _get_hexidecimal_span_id(span.parent.span_id)
 
             start_time = get_time_from_ns(span.start_time)
             end_time = get_time_from_ns(span.end_time)
@@ -127,15 +126,23 @@ class CloudTraceSpanExporter(SpanExporter):
         pass
 
 
-def get_time_from_ns(ns):
+def _get_hexidecimal_trace_id(trace_id: int) -> str:
+    return "{:032x}".format(trace_id)
+
+
+def _get_hexidecimal_span_id(span_id: int) -> str:
+    return "{:016x}".format(span_id)
+
+
+def get_time_from_ns(nanoseconds):
     """Given epoch nanoseconds, split into epoch milliseconds and remaining nanoseconds"""
-    if not ns:
+    if not nanoseconds:
         return None
-    return {"seconds": int(ns / 1e9), "nanos": int(ns % 1e9)}
+    return {"seconds": int(nanoseconds / 1e9), "nanos": int(nanoseconds % 1e9)}
 
 
 def get_truncatable_str(str_to_convert, max_length=MAX_LENGTH):
-    """Truncate a string if exceed limit and record the truncated bytes
+    """Truncate the string if it exceeds the length limit and record the truncated bytes
         count.
     """
     truncated, truncated_byte_count = check_str_length(
@@ -183,8 +190,8 @@ def _extract_links(links: Sequence[trace_api.Link]):
         return None
     extracted_links = []
     for link in links:
-        trace_id = trace_api.format_trace_id(link.context.trace_id)[2:]
-        span_id = trace_api.format_span_id(link.context.span_id)[2:]
+        trace_id = _get_hexidecimal_trace_id(link.context.trace_id)
+        span_id = _get_hexidecimal_span_id(link.context.span_id)
         extracted_links.append(
             {
                 "trace_id": trace_id,
@@ -240,9 +247,9 @@ def _format_attribute_value(value: types.AttributeValue):
         value = get_truncatable_str(str(value))
     else:
         logger.warning(
-            "ignoring attribute value {} of type {}. Values type must be one of bool, int, string or float".format(
-                value, type(value)
-            )
+            "ignoring attribute value %s of type %s. Values type must be one of bool, int, string or float",
+            value,
+            type(value),
         )
         return None
 
